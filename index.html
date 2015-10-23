@@ -1,0 +1,156 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Docker5 by wangfakang</title>
+
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <script src="javascripts/scale.fix.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1 class="header">Docker5</h1>
+        <p class="header">docker container startup method of multiple service </p>
+
+        <ul>
+          <li class="download"><a class="buttons" href="https://github.com/wangfakang/docker5/zipball/master">Download ZIP</a></li>
+          <li class="download"><a class="buttons" href="https://github.com/wangfakang/docker5/tarball/master">Download TAR</a></li>
+          <li><a class="buttons github" href="https://github.com/wangfakang/docker5">View On GitHub</a></li>
+        </ul>
+
+        <p class="header">This project is maintained by <a class="header name" href="https://github.com/wangfakang">wangfakang</a></p>
+
+
+      </header>
+      <section>
+        <p><code>关于docker启动容器的时候如何同时执行多个任务：</code><br>
+　　　从docker的官方文档来看CMD和ENTRYPOINT好像多一次只可以执行一条命令，但是可以给多个参数．<br>
+      那现在有个需求就是我要在启动容器的时候启动多个任务该如何做恩：</p>
+
+<pre><code>     方案１．使用shell脚本，把自己要启动的多个任务写在脚本中，然后ENTRYPOINT ["/docker-entrypoint.sh"]　   
+     方案２．使用 supervisor,他是linux下的一个进程管理工具．使用方法如下：     
+</code></pre>
+
+<p>下面方法摘自<a href="https://yeasy.gitbooks.io/docker_practice/content/cases/supervisor.html">docker神书教程</a></p>
+
+<h1>
+<a id="配置--" class="anchor" href="#%E9%85%8D%E7%BD%AE--" aria-hidden="true"><span class="octicon octicon-link"></span></a>配置  </h1>
+
+<p>首先创建一个 Dockerfile，内容和各部分的解释如下。　</p>
+
+<pre lang="docker"><code>FROM ubuntu:13.04
+MAINTAINER examples@docker.com
+RUN echo "deb http://archive.ubuntu.com/ubuntu precise main universe" &gt; /etc/apt/sources.list
+RUN apt-get update
+RUN apt-get upgrade -y
+
+安装 ssh、apache 和 supervisor
+
+RUN apt-get install -y --force-yes  perl-base=5.14.2-6ubuntu2
+RUN apt-get install -y apache2.2-common
+RUN apt-get install -y openssh-server apache2 supervisor
+RUN mkdir -p /var/run/sshd
+RUN mkdir -p /var/log/supervisor
+
+这里安装 3 个软件，还创建了 2 个 ssh 和 supervisor 服务正常运行所需要的目录。
+
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+添加 supervisord 的配置文件，并复制配置文件到对应目录下面。
+
+EXPOSE 22 80
+CMD ["/usr/bin/supervisord"]
+</code></pre>
+
+<p>这里我们映射了 22 和 80 端口，使用 supervisord 的可执行路径启动服务。</p>
+
+<h1>
+<a id="supervisor配置文件内容" class="anchor" href="#supervisor%E9%85%8D%E7%BD%AE%E6%96%87%E4%BB%B6%E5%86%85%E5%AE%B9" aria-hidden="true"><span class="octicon octicon-link"></span></a>supervisor配置文件内容</h1>
+
+<pre lang="docker"><code>[supervisord]
+nodaemon=true
+[program:sshd]
+command=/usr/sbin/sshd -D
+
+[program:apache2]
+command=/bin/bash -c "source /etc/apache2/envvars &amp;&amp; exec /usr/sbin/apache2 -DFOREGROUND"
+</code></pre>
+
+<p>配置文件包含目录和进程，第一段 supervsord 配置软件本身，使用 nodaemon 参数来运行。第二段包含要控制的 2 个服务。
+每一段包含一个服务的目录和启动这个服务的命令。</p>
+
+<h1>
+<a id="使用方法" class="anchor" href="#%E4%BD%BF%E7%94%A8%E6%96%B9%E6%B3%95" aria-hidden="true"><span class="octicon octicon-link"></span></a>使用方法</h1>
+
+<p>创建镜像。</p>
+
+<p>$ sudo docker build -t test/supervisord .</p>
+
+<p>启动 supervisor 容器。</p>
+
+<p>$ sudo docker run -p 22 -p 80 -t -i test/supervisord</p>
+
+<pre><code>2013-11-25 18:53:22,312 CRIT Supervisor running as root (no user in config file)
+2013-11-25 18:53:22,312 WARN Included extra file "/etc/supervisor/conf.d/supervisord.conf" during parsing
+2013-11-25 18:53:22,342 INFO supervisord started with pid 1
+2013-11-25 18:53:23,346 INFO spawned: 'sshd' with pid 6
+2013-11-25 18:53:23,349 INFO spawned: 'apache2' with pid 7
+</code></pre>
+
+<p>使用 docker run 来启动我们创建的容器。使用多个 -p 来映射多个端口，这样我们就能同时访问 ssh 和 apache 服务了。</p>
+
+<p>可以使用这个方法创建一个只有 ssh 服务的基础镜像，之后创建镜像可以使用这个镜像为基础来创建</p>
+
+<h1>
+<a id="欢迎一起交流学习-" class="anchor" href="#%E6%AC%A2%E8%BF%8E%E4%B8%80%E8%B5%B7%E4%BA%A4%E6%B5%81%E5%AD%A6%E4%B9%A0-" aria-hidden="true"><span class="octicon octicon-link"></span></a>欢迎一起交流学习 </h1>
+
+<p>在使用中有任何问题，欢迎反馈给我，可以用以下联系方式跟我交流</p>
+
+<ul>
+<li>邮件(1031379296#qq.com, 把#换成@)</li>
+<li>QQ: 1031379296</li>
+<li>weibo: <a href="http://weibo.com/u/2786211992/home">@王发康</a>
+</li>
+</ul>
+
+<h1>
+<a id="thx" class="anchor" href="#thx" aria-hidden="true"><span class="octicon octicon-link"></span></a>Thx</h1>
+
+<ul>
+<li>chunshengsterATgmail.com</li>
+</ul>
+
+<h1>
+<a id="author" class="anchor" href="#author" aria-hidden="true"><span class="octicon octicon-link"></span></a>Author</h1>
+
+<ul>
+<li>Linux\nginx\golang\c\c++爱好者</li>
+<li>欢迎一起交流  一起学习# </li>
+<li>Others say good and Others good</li>
+</ul>
+      </section>
+      <footer>
+        <p><small>Hosted on <a href="https://pages.github.com">GitHub Pages</a> using the Dinky theme</small></p>
+      </footer>
+    </div>
+    <!--[if !IE]><script>fixScale(document);</script><![endif]-->
+		          <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("docker supervisor  container startup method of multiple service ");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+
+  </body>
+</html>
